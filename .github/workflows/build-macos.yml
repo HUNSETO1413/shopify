@@ -50,16 +50,39 @@ jobs:
     
     - name: Build macOS app
       run: |
-        # 优先使用 CI 优化版本，如果不存在则使用普通版本
-        if [ -f "build_mac_ci.py" ]; then
-          python build_mac_ci.py
-        elif [ -f "build_mac.py" ]; then
-          python build_mac.py
-        else
-          echo "错误: 找不到打包脚本"
-          ls -la *.py
-          exit 1
-        fi
+        echo "开始构建 macOS 应用..."
+        echo "当前目录: $(pwd)"
+        echo "Python 版本: $(python --version)"
+        
+        # 直接使用 PyInstaller，不依赖构建脚本
+        pyinstaller \
+          --name="Shop工具合集" \
+          --onedir \
+          --windowed \
+          --hidden-import=pandas \
+          --hidden-import=openpyxl \
+          --hidden-import=selenium \
+          --hidden-import=webdriver_manager \
+          --hidden-import=tqdm \
+          --hidden-import=dnspython \
+          --hidden-import=dns \
+          --hidden-import=phonenumbers \
+          --hidden-import=tkinter \
+          --hidden-import=tkinter.ttk \
+          --hidden-import=tkinter.filedialog \
+          --hidden-import=tkinter.messagebox \
+          --hidden-import=data_cleaner \
+          --hidden-import=shopify_partners_scraper_auto \
+          --hidden-import=shop_contact_scraper_google_login_v7_7 \
+          --collect-all=selenium \
+          --collect-all=webdriver_manager \
+          --collect-all=phonenumbers \
+          --collect-all=dnspython \
+          --noconfirm \
+          shop_tools_gui.py
+        
+        echo "构建完成，检查输出..."
+        ls -la dist/ || echo "dist 文件夹不存在"
     
     - name: Check build output
       run: |

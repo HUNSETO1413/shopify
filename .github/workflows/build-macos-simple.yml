@@ -1,0 +1,97 @@
+name: Build macOS App (Simple)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Debug - Show environment
+      run: |
+        echo "Python version:"
+        python --version
+        echo "Current directory:"
+        pwd
+        echo "Files in directory:"
+        ls -la
+        echo "Python files:"
+        ls -la *.py 2>/dev/null || echo "No .py files found"
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install pandas openpyxl selenium webdriver-manager tqdm dnspython phonenumbers pyinstaller
+        pip list | head -20
+    
+    - name: Verify main script exists
+      run: |
+        if [ ! -f "shop_tools_gui.py" ]; then
+          echo "ERROR: shop_tools_gui.py not found!"
+          ls -la
+          exit 1
+        fi
+        echo "✓ shop_tools_gui.py found"
+        head -5 shop_tools_gui.py
+    
+    - name: Build with PyInstaller (direct)
+      run: |
+        pyinstaller \
+          --name="Shop工具合集" \
+          --onedir \
+          --windowed \
+          --hidden-import=pandas \
+          --hidden-import=openpyxl \
+          --hidden-import=selenium \
+          --hidden-import=webdriver_manager \
+          --hidden-import=tqdm \
+          --hidden-import=dnspython \
+          --hidden-import=dns \
+          --hidden-import=phonenumbers \
+          --hidden-import=tkinter \
+          --hidden-import=tkinter.ttk \
+          --hidden-import=tkinter.filedialog \
+          --hidden-import=tkinter.messagebox \
+          --hidden-import=data_cleaner \
+          --hidden-import=shopify_partners_scraper_auto \
+          --hidden-import=shop_contact_scraper_google_login_v7_7 \
+          --collect-all=selenium \
+          --collect-all=webdriver_manager \
+          --noconfirm \
+          shop_tools_gui.py || {
+            echo "PyInstaller failed, checking for errors..."
+            if [ -f "build/*/warn-*.txt" ]; then
+              cat build/*/warn-*.txt
+            fi
+            exit 1
+          }
+    
+    - name: Verify app bundle
+      run: |
+        if [ -d "dist/Shop工具合集.app" ]; then
+          echo "✓ App bundle created successfully"
+          du -sh "dist/Shop工具合集.app"
+          ls -la "dist/Shop工具合集.app/Contents/"
+        else
+          echo "✗ App bundle not found"
+          echo "Contents of dist folder:"
+          ls -la dist/ || echo "dist folder does not exist"
+          exit 1
+        fi
+    
+    - name: Upload app bundle
+      uses: actions/upload-artifact@v3
+      with:
+        name: Shop工具合集-macOS
+        path: dist/Shop工具合集.app
+        if-no-files-found: error
+        retention-days: 7
