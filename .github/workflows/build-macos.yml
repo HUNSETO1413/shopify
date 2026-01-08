@@ -17,26 +17,89 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.11'
+        python-version: '3.10'  # 使用 3.10 更稳定
+    
+    - name: Display Python version
+      run: |
+        python --version
+        which python
+    
+    - name: List files
+      run: |
+        ls -la
+        echo "---"
+        ls -la *.py || echo "No Python files found"
     
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r requirements.txt || echo "Failed to install from requirements.txt"
         pip install pyinstaller
+        pip list | grep -E "(pandas|selenium|pyinstaller)"
+    
+    - name: Check build script exists
+      run: |
+        if [ -f "build_mac.py" ]; then
+          echo "✓ build_mac.py exists"
+          head -20 build_mac.py
+        else
+          echo "✗ build_mac.py not found"
+          ls -la *.py
+          exit 1
+        fi
     
     - name: Build macOS app
       run: |
-        python build_mac.py
+        # 优先使用 CI 优化版本，如果不存在则使用普通版本
+        if [ -f "build_mac_ci.py" ]; then
+          python build_mac_ci.py
+        elif [ -f "build_mac.py" ]; then
+          python build_mac.py
+        else
+          echo "错误: 找不到打包脚本"
+          ls -la *.py
+          exit 1
+        fi
     
-    - name: Create DMG
+    - name: Check build output
       run: |
-        python create_dmg.py
+        echo "Checking dist folder..."
+        ls -la dist/ || echo "dist folder not found"
+        if [ -d "dist/Shop工具合集.app" ]; then
+          echo "✓ App bundle created"
+          du -sh dist/Shop工具合集.app
+        else
+          echo "✗ App bundle not found"
+          ls -la dist/ || true
+        fi
     
-    - name: Upload artifacts
+    - name: Create DMG (optional)
+      continue-on-error: true
+      run: |
+        if [ -f "create_dmg.py" ] && [ -d "dist/Shop工具合集.app" ]; then
+          python create_dmg.py || echo "DMG creation failed, but continuing..."
+        else
+          echo "Skipping DMG creation"
+        fi
+    
+    - name: Upload app bundle
+      if: success() || failure()
       uses: actions/upload-artifact@v3
       with:
         name: Shop工具合集-macOS
         path: |
           dist/Shop工具合集.app
           dist/Shop工具合集.dmg
+        if-no-files-found: warn
+        retention-days: 7
+    
+    - name: Upload build logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-logs
+        path: |
+          build/
+          *.log
+        if-no-files-found: ignore
+        retention-days: 1

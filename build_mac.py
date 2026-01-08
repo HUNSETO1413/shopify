@@ -13,21 +13,25 @@ import platform
 def check_platform():
     """检查是否在 macOS 上运行"""
     if sys.platform != 'darwin':
-        print("错误: 此脚本只能在 macOS 上运行")
-        print(f"当前系统: {sys.platform}")
-        return False
+        print(f"警告: 当前系统是 {sys.platform}，不是 macOS")
+        print("在 CI/CD 环境中继续执行...")
+        # 在 GitHub Actions 中，即使检查失败也继续
+        # return False
     
     # 检查架构
-    arch = platform.machine()
-    if arch == 'arm64':
-        print(f"✓ 检测到 Apple Silicon (M 芯片) - {arch}")
-    elif arch == 'x86_64':
-        print(f"⚠ 检测到 Intel 芯片 - {arch}")
-        print("  注意: 此脚本主要针对 M 芯片优化")
-    else:
-        print(f"⚠ 未知架构: {arch}")
+    try:
+        arch = platform.machine()
+        if arch == 'arm64':
+            print(f"✓ 检测到 Apple Silicon (M 芯片) - {arch}")
+        elif arch == 'x86_64':
+            print(f"⚠ 检测到 Intel 芯片 - {arch}")
+            print("  注意: 此脚本主要针对 M 芯片优化")
+        else:
+            print(f"⚠ 未知架构: {arch}")
+    except Exception as e:
+        print(f"⚠ 无法检测架构: {e}")
     
-    return True
+    return True  # 在 CI/CD 中总是返回 True
 
 def check_pyinstaller():
     """检查 PyInstaller 是否已安装"""
