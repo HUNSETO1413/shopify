@@ -5,7 +5,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from shopify_partners_scraper_auto import scrape_shopify_partners
 from shop_contact_scraper_google_login_v7_7 import run_shop_contact_scraper
-from data_cleaner import clean_data
+from data_cleaner import clean_data, clean_data_batch
 
 
 class CardFrame(ttk.Frame):
@@ -289,6 +289,8 @@ class App(tk.Tk):
             ("危地马拉 (Guatemala)", "guatemala"),
         ]
         self.country_display_to_code = {display: code for display, code in country_options}
+        # 创建国家代号到中文名称的映射（用于文件名）
+        self.country_code_to_chinese = {code: display.split(' (')[0] for display, code in country_options}
         displays = [d for d, _ in country_options]
         if displays:
             self.country_var.set(displays[0])
@@ -297,6 +299,8 @@ class App(tk.Tk):
                                     values=displays, state="readonly", style="Card.TCombobox",
                                     width=40)
         country_combo.pack(fill="x", pady=(0, 0))
+        # 绑定国家选择变化事件，自动更新输出文件名
+        country_combo.bind("<<ComboboxSelected>>", self._on_country_changed)
 
         # 设置卡片区域
         settings_section = self._create_card_section(container, "设置")
@@ -320,7 +324,11 @@ class App(tk.Tk):
         output_section = self._create_card_section(container, "输出文件")
         output_section.pack(fill="x", pady=(0, 20))
 
-        self.shopify_output_var = tk.StringVar(value=os.path.abspath("shopify_partners.xlsx"))
+        # 初始化输出文件名（默认使用第一个国家，中文名称）
+        default_country = self.country_display_to_code.get(displays[0] if displays else "", "")
+        default_chinese = self.country_code_to_chinese.get(default_country, default_country) if default_country else ""
+        default_filename = f"Shopify合作伙伴_{default_chinese}.xlsx" if default_chinese else "Shopify合作伙伴.xlsx"
+        self.shopify_output_var = tk.StringVar(value=os.path.abspath(default_filename))
         
         output_frame = ttk.Frame(output_section, style="Card.TFrame")
         output_frame.pack(fill="x", pady=(0, 8))
@@ -405,7 +413,7 @@ class App(tk.Tk):
 
         # 结果Excel
         ttk.Label(output_section, text="结果 Excel", style="Label.TLabel").pack(anchor="w", pady=(0, 8))
-        self.contact_output_var = tk.StringVar(value=os.path.abspath("shop_contacts_all.xlsx"))
+        self.contact_output_var = tk.StringVar(value=os.path.abspath("Shop站点联系信息.xlsx"))
         output_frame1 = ttk.Frame(output_section, style="Card.TFrame")
         output_frame1.pack(fill="x", pady=(0, 12))
         output_entry1 = ttk.Entry(output_frame1, textvariable=self.contact_output_var,
@@ -419,7 +427,7 @@ class App(tk.Tk):
 
         # 失败记录txt
         ttk.Label(output_section, text="失败记录", style="Label.TLabel").pack(anchor="w", pady=(0, 8))
-        self.failed_file_var = tk.StringVar(value=os.path.abspath("failed_keywords.txt"))
+        self.failed_file_var = tk.StringVar(value=os.path.abspath("失败关键词记录.txt"))
         output_frame2 = ttk.Frame(output_section, style="Card.TFrame")
         output_frame2.pack(fill="x", pady=(0, 0))
         output_entry2 = ttk.Entry(output_frame2, textvariable=self.failed_file_var,
@@ -473,28 +481,77 @@ class App(tk.Tk):
         input_section = self._create_card_section(container, "输入文件")
         input_section.pack(fill="x", pady=(0, 20))
 
+        # 单文件模式
+        single_file_frame = ttk.Frame(input_section, style="Card.TFrame")
+        single_file_frame.pack(fill="x", pady=(0, 12))
+        ttk.Label(single_file_frame, text="单个文件", style="Label.TLabel").pack(anchor="w", pady=(0, 8))
         self.cleaner_input_var = tk.StringVar()
-        input_frame = ttk.Frame(input_section, style="Card.TFrame")
-        input_frame.pack(fill="x", pady=(0, 8))
-        input_entry = ttk.Entry(input_frame, textvariable=self.cleaner_input_var, style="Card.TEntry")
-        input_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ttk.Button(input_frame, text="选择", command=self._choose_cleaner_input,
-                  style="Secondary.TButton").pack(side="left")
+        input_frame = ttk.Frame(single_file_frame, style="Card.TFrame")
+        input_frame.pack(fill="x", pady=(0, 0))
+        self.cleaner_input_entry = ttk.Entry(input_frame, textvariable=self.cleaner_input_var, style="Card.TEntry")
+        self.cleaner_input_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.cleaner_input_button = ttk.Button(input_frame, text="选择", command=self._choose_cleaner_input,
+                  style="Secondary.TButton")
+        self.cleaner_input_button.pack(side="left")
+        
+        # 批量文件模式
+        batch_file_frame = ttk.Frame(input_section, style="Card.TFrame")
+        batch_file_frame.pack(fill="x", pady=(0, 0))
+        ttk.Label(batch_file_frame, text="批量文件（可选）", style="Label.TLabel").pack(anchor="w", pady=(0, 8))
+        self.cleaner_batch_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(batch_file_frame, text="启用批量处理模式",
+                       variable=self.cleaner_batch_mode_var, style="Card.TCheckbutton",
+                       command=self._toggle_batch_mode).pack(anchor="w", pady=(0, 8))
+        
+        self.cleaner_batch_input_var = tk.StringVar()
+        batch_input_frame = ttk.Frame(batch_file_frame, style="Card.TFrame")
+        batch_input_frame.pack(fill="x", pady=(0, 0))
+        batch_input_entry = ttk.Entry(batch_input_frame, textvariable=self.cleaner_batch_input_var, 
+                                     style="Card.TEntry", state="disabled")
+        batch_input_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Button(batch_input_frame, text="选择文件夹", command=self._choose_cleaner_batch_input,
+                  style="Secondary.TButton", state="disabled").pack(side="left")
+        self.cleaner_batch_input_button = ttk.Button(batch_input_frame, text="选择多个文件", 
+                                                     command=self._choose_cleaner_batch_files,
+                                                     style="Secondary.TButton", state="disabled")
+        self.cleaner_batch_input_button.pack(side="left", padx=(8, 0))
+        self.cleaner_batch_input_entry = batch_input_entry
 
         # 输出文件卡片区域
-        output_section = self._create_card_section(container, "输出文件")
+        output_section = self._create_card_section(container, "输出设置")
         output_section.pack(fill="x", pady=(0, 20))
 
-        self.cleaner_output_var = tk.StringVar(value=os.path.abspath("cleaned_data.xlsx"))
-        output_frame = ttk.Frame(output_section, style="Card.TFrame")
-        output_frame.pack(fill="x", pady=(0, 8))
-        output_entry = ttk.Entry(output_frame, textvariable=self.cleaner_output_var, style="Card.TEntry")
-        output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ttk.Button(output_frame, text="选择", command=self._choose_cleaner_output,
-                  style="Secondary.TButton").pack(side="left", padx=(0, 8))
-        ttk.Button(output_frame, text="打开文件夹",
+        # 单文件输出
+        single_output_frame = ttk.Frame(output_section, style="Card.TFrame")
+        single_output_frame.pack(fill="x", pady=(0, 12))
+        ttk.Label(single_output_frame, text="输出文件（单文件模式）", style="Label.TLabel").pack(anchor="w", pady=(0, 8))
+        self.cleaner_output_var = tk.StringVar(value=os.path.abspath("已清洗数据.xlsx"))
+        output_frame = ttk.Frame(single_output_frame, style="Card.TFrame")
+        output_frame.pack(fill="x", pady=(0, 0))
+        self.cleaner_output_entry = ttk.Entry(output_frame, textvariable=self.cleaner_output_var, style="Card.TEntry")
+        self.cleaner_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.cleaner_output_button1 = ttk.Button(output_frame, text="选择", command=self._choose_cleaner_output,
+                  style="Secondary.TButton")
+        self.cleaner_output_button1.pack(side="left", padx=(0, 8))
+        self.cleaner_output_button2 = ttk.Button(output_frame, text="打开文件夹",
                   command=lambda: self._open_in_explorer(self.cleaner_output_var.get()),
-                  style="Secondary.TButton").pack(side="left")
+                  style="Secondary.TButton")
+        self.cleaner_output_button2.pack(side="left")
+        
+        # 批量输出目录
+        batch_output_frame = ttk.Frame(output_section, style="Card.TFrame")
+        batch_output_frame.pack(fill="x", pady=(0, 0))
+        ttk.Label(batch_output_frame, text="输出目录（批量模式）", style="Label.TLabel").pack(anchor="w", pady=(0, 8))
+        self.cleaner_batch_output_var = tk.StringVar()
+        batch_output_entry_frame = ttk.Frame(batch_output_frame, style="Card.TFrame")
+        batch_output_entry_frame.pack(fill="x", pady=(0, 0))
+        batch_output_entry = ttk.Entry(batch_output_entry_frame, textvariable=self.cleaner_batch_output_var,
+                                     style="Card.TEntry", state="disabled")
+        batch_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Button(batch_output_entry_frame, text="选择", command=self._choose_cleaner_batch_output,
+                  style="Secondary.TButton", state="disabled").pack(side="left")
+        self.cleaner_batch_output_entry = batch_output_entry
+        self.cleaner_batch_output_button = batch_output_entry_frame.winfo_children()[-1]
 
         # 列名设置卡片区域（可选）
         columns_section = self._create_card_section(container, "列名设置（可选）")
@@ -549,6 +606,29 @@ class App(tk.Tk):
                   style="Primary.TButton").pack(fill="x")
 
     # --------------- 文件选择 ---------------
+    def _on_country_changed(self, event=None):
+        """当国家选择改变时，自动更新输出文件名"""
+        display = self.country_var.get().strip()
+        country = self.country_display_to_code.get(display, display)
+        if country:
+            # 获取中文国家名
+            chinese_name = self.country_code_to_chinese.get(country, country)
+            # 获取当前输出路径
+            current_path = self.shopify_output_var.get().strip()
+            # 如果是默认路径或包含默认文件名，则更新
+            if not current_path or "shopify" in current_path.lower() and "partners" in current_path.lower():
+                # 提取目录路径
+                if os.path.isabs(current_path):
+                    dir_path = os.path.dirname(current_path)
+                    if not dir_path:
+                        dir_path = os.getcwd()
+                else:
+                    dir_path = os.path.dirname(os.path.abspath(current_path)) if current_path else os.getcwd()
+                # 生成新文件名，使用中文国家名
+                new_filename = f"Shopify合作伙伴_{chinese_name}.xlsx"
+                new_path = os.path.join(dir_path, new_filename)
+                self.shopify_output_var.set(new_path)
+
     def _choose_shopify_output(self):
         path = filedialog.asksaveasfilename(
             title="选择保存路径",
@@ -595,6 +675,33 @@ class App(tk.Tk):
             base_name = os.path.splitext(path)[0]
             self.cleaner_output_var.set(f"{base_name}_cleaned.xlsx")
 
+    def _toggle_batch_mode(self):
+        """切换批量处理模式"""
+        is_batch = self.cleaner_batch_mode_var.get()
+        state_batch = "normal" if is_batch else "disabled"
+        state_single = "disabled" if is_batch else "normal"
+        
+        # 更新批量输入控件状态
+        self.cleaner_batch_input_entry.config(state=state_batch)
+        # 找到批量输入相关的按钮
+        batch_input_parent = self.cleaner_batch_input_entry.master
+        for widget in batch_input_parent.winfo_children():
+            if isinstance(widget, ttk.Button):
+                widget.config(state=state_batch)
+        
+        # 更新批量输出控件状态
+        self.cleaner_batch_output_entry.config(state=state_batch)
+        self.cleaner_batch_output_button.config(state=state_batch)
+        
+        # 更新单文件输入输出状态（批量模式下禁用）
+        if hasattr(self, 'cleaner_input_entry'):
+            self.cleaner_input_entry.config(state=state_single)
+            self.cleaner_input_button.config(state=state_single)
+        if hasattr(self, 'cleaner_output_entry'):
+            self.cleaner_output_entry.config(state=state_single)
+            self.cleaner_output_button1.config(state=state_single)
+            self.cleaner_output_button2.config(state=state_single)
+
     def _choose_cleaner_output(self):
         path = filedialog.asksaveasfilename(
             title="选择清洗结果保存路径",
@@ -603,6 +710,35 @@ class App(tk.Tk):
         )
         if path:
             self.cleaner_output_var.set(path)
+    
+    def _choose_cleaner_batch_input(self):
+        """选择批量处理的文件夹"""
+        folder = filedialog.askdirectory(title="选择包含数据文件的文件夹")
+        if folder:
+            self.cleaner_batch_input_var.set(folder)
+            # 自动设置输出目录
+            if not self.cleaner_batch_output_var.get():
+                self.cleaner_batch_output_var.set(os.path.join(folder, "已清洗"))
+    
+    def _choose_cleaner_batch_files(self):
+        """选择批量处理的多个文件"""
+        files = filedialog.askopenfilenames(
+            title="选择要清洗的数据文件（可多选）",
+            filetypes=[("Excel 文件", "*.xlsx *.xls"), ("CSV 文件", "*.csv"), ("所有文件", "*.*")],
+        )
+        if files:
+            file_list = "\n".join(files)
+            self.cleaner_batch_input_var.set(file_list)
+            # 自动设置输出目录
+            if files and not self.cleaner_batch_output_var.get():
+                output_dir = os.path.dirname(files[0])
+                self.cleaner_batch_output_var.set(os.path.join(output_dir, "已清洗"))
+    
+    def _choose_cleaner_batch_output(self):
+        """选择批量处理的输出目录"""
+        folder = filedialog.askdirectory(title="选择清洗结果保存目录")
+        if folder:
+            self.cleaner_batch_output_var.set(folder)
 
     def _export_log(self):
         """导出右侧日志为 txt 文件"""
@@ -683,12 +819,28 @@ class App(tk.Tk):
 
     def _run_shopify(self, country, max_pages, output_path):
         try:
+            # 获取中文国家名用于文件名
+            display = self.country_var.get().strip()
+            chinese_name = self.country_code_to_chinese.get(country, country)
+            
+            # 确保输出文件名包含中文国家名
+            if output_path and chinese_name:
+                base_name = os.path.basename(output_path)
+                dir_name = os.path.dirname(output_path) if os.path.dirname(output_path) else "."
+                name_without_ext, ext = os.path.splitext(base_name)
+                
+                # 如果文件名不包含中文国家名，自动添加
+                if chinese_name not in name_without_ext:
+                    new_name = f"{name_without_ext}_{chinese_name}{ext}"
+                    output_path = os.path.join(dir_name, new_name)
+            
             scrape_shopify_partners(
                 country=country,
                 visible=self.visible_var.get(),
                 max_pages=max_pages,
                 output_path=output_path,
                 log_func=self.log,
+                country_chinese_name=chinese_name,  # 传递中文国家名
             )
         except Exception as e:
             self.log(f"运行出错：{e}")
@@ -768,44 +920,174 @@ class App(tk.Tk):
 
             self.after(0, _finish)
 
+    def _run_cleaner_batch(self, input_files, output_dir, email_cols, whatsapp_cols):
+        """批量处理多个文件"""
+        try:
+            from data_cleaner import clean_data_batch
+            
+            batch_stats = clean_data_batch(
+                input_files=input_files,
+                output_dir=output_dir,
+                email_columns=email_cols,
+                whatsapp_columns=whatsapp_cols,
+                check_email_mx=self.cleaner_check_mx_var.get(),
+                check_email_smtp=self.cleaner_check_smtp_var.get(),
+                check_whatsapp_online=self.cleaner_check_wa_online_var.get(),
+                progress_callback=self.log,
+            )
+
+            # 输出统计信息
+            self.log("\n=== 批量数据清洗完成 ===\n")
+            self.log(f"总文件数: {batch_stats['total_files']}")
+            self.log(f"成功: {batch_stats['successful_files']}")
+            self.log(f"失败: {batch_stats['failed_files']}")
+            
+            if batch_stats['file_results']:
+                self.log("\n处理结果详情:")
+                for result in batch_stats['file_results']:
+                    if result['status'] == 'success':
+                        self.log(f"  ✓ {os.path.basename(result['file'])} -> {os.path.basename(result['output'])}")
+                        stats = result['stats']
+                        self.log(f"    总行数: {stats['total_rows']}, 有效: {stats['valid_rows']}, 无效: {stats['invalid_rows']}")
+                    else:
+                        self.log(f"  ✗ {os.path.basename(result['file'])}: {result.get('error', '未知错误')}")
+
+        except Exception as e:
+            self.log(f"批量处理出错：{e}")
+            import traceback
+            self.log(traceback.format_exc())
+            messagebox.showerror("错误", f"批量数据清洗出错：{e}")
+        finally:
+            def _finish():
+                self.cleaner_progress.stop()
+                try:
+                    msg = (
+                        f"批量数据清洗完成！\n"
+                        f"成功: {batch_stats.get('successful_files', 0)}/{batch_stats.get('total_files', 0)}\n"
+                        f"失败: {batch_stats.get('failed_files', 0)}/{batch_stats.get('total_files', 0)}\n"
+                        f"输出目录: {output_dir}"
+                    )
+                    messagebox.showinfo("完成", msg)
+                except Exception:
+                    pass
+
+            self.after(0, _finish)
+
     def _run_cleaner_thread(self):
-        input_path = self.cleaner_input_var.get().strip()
-        if not input_path:
-            messagebox.showwarning("提示", "请先选择要清洗的数据文件")
-            return
+        is_batch = self.cleaner_batch_mode_var.get()
+        
+        if is_batch:
+            # 批量处理模式
+            batch_input = self.cleaner_batch_input_var.get().strip()
+            if not batch_input:
+                messagebox.showwarning("提示", "请选择要批量处理的文件或文件夹")
+                return
+            
+            # 收集文件列表
+            input_files = []
+            import glob
+            
+            if os.path.isdir(batch_input):
+                # 如果是文件夹，查找所有 Excel 和 CSV 文件
+                for pattern in ['*.xlsx', '*.xls', '*.csv']:
+                    pattern_path = os.path.join(batch_input, pattern)
+                    input_files.extend(glob.glob(pattern_path))
+            else:
+                # 检查是否是文件路径列表（多行文本）
+                if '\n' in batch_input or ';' in batch_input:
+                    # 按换行或分号分割
+                    separator = '\n' if '\n' in batch_input else ';'
+                    input_files = [f.strip() for f in batch_input.split(separator) if f.strip()]
+                else:
+                    # 单个文件路径
+                    input_files = [batch_input]
+            
+            # 验证文件存在
+            valid_files = []
+            for f in input_files:
+                if os.path.exists(f):
+                    valid_files.append(f)
+                else:
+                    self.log(f"警告: 文件不存在，已跳过: {f}")
+            
+            if not valid_files:
+                messagebox.showwarning("提示", "未找到有效的文件")
+                return
+            
+            output_dir = self.cleaner_batch_output_var.get().strip()
+            if not output_dir:
+                messagebox.showwarning("提示", "请设置输出目录")
+                return
+            
+            # 创建输出目录
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+            except Exception as e:
+                messagebox.showerror("错误", f"无法创建输出目录: {e}")
+                return
+            
+            # 解析列名
+            email_cols = None
+            email_cols_str = self.cleaner_email_cols_var.get().strip()
+            if email_cols_str:
+                email_cols = [col.strip() for col in email_cols_str.split(',') if col.strip()]
 
-        if not os.path.exists(input_path):
-            messagebox.showerror("错误", f"文件不存在：{input_path}")
-            return
+            whatsapp_cols = None
+            whatsapp_cols_str = self.cleaner_whatsapp_cols_var.get().strip()
+            if whatsapp_cols_str:
+                whatsapp_cols = [col.strip() for col in whatsapp_cols_str.split(',') if col.strip()]
 
-        output_path = self.cleaner_output_var.get().strip()
-        if not output_path:
-            messagebox.showwarning("提示", "请设置输出文件路径")
-            return
+            self.log("\n=== 批量数据清洗开始 ===\n")
+            self.log(f"输入文件数: {len(valid_files)}")
+            self.log(f"输出目录: {output_dir}")
 
-        # 解析列名
-        email_cols = None
-        email_cols_str = self.cleaner_email_cols_var.get().strip()
-        if email_cols_str:
-            email_cols = [col.strip() for col in email_cols_str.split(',') if col.strip()]
+            self.cleaner_progress.start(10)
 
-        whatsapp_cols = None
-        whatsapp_cols_str = self.cleaner_whatsapp_cols_var.get().strip()
-        if whatsapp_cols_str:
-            whatsapp_cols = [col.strip() for col in whatsapp_cols_str.split(',') if col.strip()]
+            t = threading.Thread(
+                target=self._run_cleaner_batch,
+                args=(valid_files, output_dir, email_cols, whatsapp_cols),
+                daemon=True,
+            )
+            t.start()
+        else:
+            # 单文件处理模式
+            input_path = self.cleaner_input_var.get().strip()
+            if not input_path:
+                messagebox.showwarning("提示", "请先选择要清洗的数据文件")
+                return
 
-        self.log("\n=== 数据清洗开始 ===\n")
-        self.log(f"输入文件: {input_path}")
-        self.log(f"输出文件: {output_path}")
+            if not os.path.exists(input_path):
+                messagebox.showerror("错误", f"文件不存在：{input_path}")
+                return
 
-        self.cleaner_progress.start(10)
+            output_path = self.cleaner_output_var.get().strip()
+            if not output_path:
+                messagebox.showwarning("提示", "请设置输出文件路径")
+                return
 
-        t = threading.Thread(
-            target=self._run_cleaner,
-            args=(input_path, output_path, email_cols, whatsapp_cols),
-            daemon=True,
-        )
-        t.start()
+            # 解析列名
+            email_cols = None
+            email_cols_str = self.cleaner_email_cols_var.get().strip()
+            if email_cols_str:
+                email_cols = [col.strip() for col in email_cols_str.split(',') if col.strip()]
+
+            whatsapp_cols = None
+            whatsapp_cols_str = self.cleaner_whatsapp_cols_var.get().strip()
+            if whatsapp_cols_str:
+                whatsapp_cols = [col.strip() for col in whatsapp_cols_str.split(',') if col.strip()]
+
+            self.log("\n=== 数据清洗开始 ===\n")
+            self.log(f"输入文件: {input_path}")
+            self.log(f"输出文件: {output_path}")
+
+            self.cleaner_progress.start(10)
+
+            t = threading.Thread(
+                target=self._run_cleaner,
+                args=(input_path, output_path, email_cols, whatsapp_cols),
+                daemon=True,
+            )
+            t.start()
 
     def _run_cleaner(self, input_path, output_path, email_cols, whatsapp_cols):
         try:

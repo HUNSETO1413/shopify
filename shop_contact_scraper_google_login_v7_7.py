@@ -44,8 +44,8 @@ FAST_MODE = True
 
 # ---------------- 基本 CONFIG ----------------
 DEFAULT_KEYWORDS_XLSX = "keywords.xlsx"
-DEFAULT_OUTPUT_ALL = "shop_contacts_all.xlsx"
-DEFAULT_FAILED_FILE = "failed_keywords.txt"
+DEFAULT_OUTPUT_ALL = "Shop站点联系信息.xlsx"
+DEFAULT_FAILED_FILE = "失败关键词记录.txt"
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", re.I)
 TEL_HREF_RE = re.compile(r'href=[\'"]tel:([^\'"]+)[\'"]', re.I)
 MAILTO_RE = re.compile(r'href=[\'"]mailto:([^\'"]+)[\'"]', re.I)
@@ -1011,8 +1011,12 @@ def run_shop_contact_scraper(
         df_out.to_excel(output_path, index=False)
         log_func(f"\n✅ 已保存 {len(df_out)} 条记录到 {output_path}")
     except PermissionError:
-        alt_name = f"shop_contacts_all_{int(time.time())}.xlsx"
-        alt_path = os.path.abspath(alt_name)
+        # 备用文件名也使用中文
+        base_name = os.path.basename(output_path)
+        dir_name = os.path.dirname(output_path) if os.path.dirname(output_path) else "."
+        name_without_ext, ext = os.path.splitext(base_name)
+        alt_name = f"{name_without_ext}_{int(time.time())}{ext}"
+        alt_path = os.path.join(dir_name, alt_name) if dir_name != "." else os.path.abspath(alt_name)
         df_out.to_excel(alt_path, index=False)
         log_func(
             f"\n⚠️ 保存 {output_path} 失败（可能文件被 Excel 打开），已改为保存到 {alt_path}"

@@ -30,6 +30,7 @@ def scrape_shopify_partners(
     sleep_item: float = 0.8,
     output_path: str | None = None,
     log_func=print,
+    country_chinese_name: str | None = None,  # 新增：中文国家名参数
 ):
     """
     核心抓取函数，方便 GUI 或命令行调用。
@@ -41,6 +42,7 @@ def scrape_shopify_partners(
     - sleep_item: 详情页等待秒数
     - output_path: Excel 输出完整路径；为空则默认保存在当前目录
     - log_func: 日志函数，默认 print，GUI 中可传入自定义追加文本函数
+    - country_chinese_name: 中文国家名（用于文件名）
     """
     country = (country or "").strip().lower()
     if not country:
@@ -48,12 +50,31 @@ def scrape_shopify_partners(
 
     base_list_url = f"https://www.shopify.com/partners/directory/locations/{country}?page={{}}"
 
-    if not output_path:
-        output_path = os.path.abspath(f"shopify_{country}_partners.xlsx")
+    # 使用中文国家名生成文件名
+    if country_chinese_name:
+        country_name_for_file = country_chinese_name
     else:
-        # 如果给的是目录，则拼接默认文件名
+        # 如果没有提供中文名，使用国家代号（向后兼容）
+        country_name_for_file = country
+
+    if not output_path:
+        output_path = os.path.abspath(f"Shopify合作伙伴_{country_name_for_file}.xlsx")
+    else:
+        # 如果给的是目录，则拼接默认文件名（包含中文国家名）
         if os.path.isdir(output_path):
-            output_path = os.path.join(output_path, f"shopify_{country}_partners.xlsx")
+            output_path = os.path.join(output_path, f"Shopify合作伙伴_{country_name_for_file}.xlsx")
+        else:
+            # 检查文件名是否已包含国家名
+            base_name = os.path.basename(output_path)
+            dir_name = os.path.dirname(output_path) if os.path.dirname(output_path) else "."
+            name_without_ext, ext = os.path.splitext(base_name)
+            
+            # 如果文件名不包含国家名，自动添加
+            if country_name_for_file not in name_without_ext and country not in name_without_ext.lower():
+                # 在文件名末尾添加中文国家名（在扩展名之前）
+                new_name = f"{name_without_ext}_{country_name_for_file}{ext}"
+                output_path = os.path.join(dir_name, new_name)
+                log_func(f"文件名已自动添加国家名: {os.path.basename(output_path)}")
 
     chrome_options = webdriver.ChromeOptions()
     if not visible:
@@ -111,62 +132,141 @@ def scrape_shopify_partners(
 
     # ---------- STEP 2: 逐条抓取详情信息 ----------
     results = []
-    for link in tqdm(profile_links, desc="抓取详情页", ncols=80):
-        try:
-            driver.get(link)
-        except Exception as e:
-            log_func(f"打开详情页失败：{link} {e}")
-            continue
+    total_links = len(profile_links)
+    
+    # 检查是否在 GUI 环境中（log_func 不是 print）
+    is_gui_mode = log_func != print
+    
+    # 使用普通循环（GUI 模式下禁用 tqdm 以避免写入错误）
+    if is_gui_mode:
+        # GUI 模式：使用普通循环，手动输出进度
+        for idx, link in enumerate(profile_links, 1):
+            if idx % 10 == 0 or idx == 1 or idx == total_links:
+                log_func(f"正在抓取详情页: {idx}/{total_links} - {link[:80]}...")
+            try:
+                driver.get(link)
+            except Exception as e:
+                log_func(f"打开详情页失败：{link} {e}")
+                continue
 
-        time.sleep(sleep_item)
+            time.sleep(sleep_item)
 
-        # name
-        name = ""
-        try:
-            h1s = driver.find_elements(By.TAG_NAME, "h1")
-            if h1s:
-                name = h1s[0].text.strip()
-        except Exception:
+            # name
             name = ""
+            try:
+                h1s = driver.find_elements(By.TAG_NAME, "h1")
+                if h1s:
+                    name = h1s[0].text.strip()
+            except Exception:
+                name = ""
 
-        # location（尝试从左侧卡片或页面文本抓取）
-        location = ""
-        try:
-            # 优先找包含 'Primary location' 等字段的相邻文本
-            loc_candidates = driver.find_elements(
-                By.XPATH,
-                "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'primary location') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'location') or contains(.,'Netherlands') or contains(.,'Nederland') or contains(.,'意大利')]",
-            )
-            if loc_candidates:
-                for c in loc_candidates:
-                    txt = c.text.strip()
-                    if txt and (
-                        ("Netherlands" in txt)
-                        or ("Nederland" in txt)
-                        or ("意大利" in txt)
-                        or re.search(
-                            r"[A-Za-z\s]+,?\s*(Netherlands|Nederland|Italy|Italia|United Kingdom|UK|England)",
-                            txt,
-                        )
-                    ):
-                        location = txt
-                        break
-        except Exception:
+            # location（尝试从左侧卡片或页面文本抓取）
             location = ""
+            try:
+                # 优先找包含 'Primary location' 等字段的相邻文本
+                loc_candidates = driver.find_elements(
+                    By.XPATH,
+                    "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'primary location') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'location') or contains(.,'Netherlands') or contains(.,'Nederland') or contains(.,'意大利')]",
+                )
+                if loc_candidates:
+                    for c in loc_candidates:
+                        txt = c.text.strip()
+                        if txt and (
+                            ("Netherlands" in txt)
+                            or ("Nederland" in txt)
+                            or ("意大利" in txt)
+                            or re.search(
+                                r"[A-Za-z\s]+,?\s*(Netherlands|Nederland|Italy|Italia|United Kingdom|UK|England)",
+                                txt,
+                            )
+                        ):
+                            location = txt
+                            break
+            except Exception:
+                location = ""
 
-        # 联系信息提取（主方法）
-        email, phone, website = extract_from_contact_section(driver)
+            # 联系信息提取（主方法）
+            email, phone, website = extract_from_contact_section(driver)
 
-        results.append(
-            {
-                "名称": name,
-                "页面链接": link,
-                "邮箱": email,
-                "电话": phone,
-                "网站": website,
-                "位置": location,
-            }
-        )
+            results.append(
+                {
+                    "名称": name,
+                    "页面链接": link,
+                    "邮箱": email,
+                    "电话": phone,
+                    "网站": website,
+                    "位置": location,
+                }
+            )
+            
+            # 每抓取一定数量后输出进度（GUI 模式）
+            if len(results) % 10 == 0:
+                log_func(f"已抓取 {len(results)}/{total_links} 条记录...")
+    else:
+        # 命令行模式：尝试使用 tqdm 显示进度条，如果失败则使用普通循环
+        try:
+            link_iterator = tqdm(profile_links, desc="抓取详情页", ncols=80, disable=False)
+        except (AttributeError, OSError, IOError) as e:
+            # 如果 tqdm 失败（例如 stdout 不可写），使用普通迭代器
+            log_func(f"注意: 无法显示进度条，使用普通模式: {e}")
+            link_iterator = profile_links
+        
+        for link in link_iterator:
+            try:
+                driver.get(link)
+            except Exception as e:
+                log_func(f"打开详情页失败：{link} {e}")
+                continue
+
+            time.sleep(sleep_item)
+
+            # name
+            name = ""
+            try:
+                h1s = driver.find_elements(By.TAG_NAME, "h1")
+                if h1s:
+                    name = h1s[0].text.strip()
+            except Exception:
+                name = ""
+
+            # location（尝试从左侧卡片或页面文本抓取）
+            location = ""
+            try:
+                # 优先找包含 'Primary location' 等字段的相邻文本
+                loc_candidates = driver.find_elements(
+                    By.XPATH,
+                    "//*[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'primary location') or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'location') or contains(.,'Netherlands') or contains(.,'Nederland') or contains(.,'意大利')]",
+                )
+                if loc_candidates:
+                    for c in loc_candidates:
+                        txt = c.text.strip()
+                        if txt and (
+                            ("Netherlands" in txt)
+                            or ("Nederland" in txt)
+                            or ("意大利" in txt)
+                            or re.search(
+                                r"[A-Za-z\s]+,?\s*(Netherlands|Nederland|Italy|Italia|United Kingdom|UK|England)",
+                                txt,
+                            )
+                        ):
+                            location = txt
+                            break
+            except Exception:
+                location = ""
+
+            # 联系信息提取（主方法）
+            email, phone, website = extract_from_contact_section(driver)
+
+            results.append(
+                {
+                    "名称": name,
+                    "页面链接": link,
+                    "邮箱": email,
+                    "电话": phone,
+                    "网站": website,
+                    "位置": location,
+                }
+            )
 
     # 关闭浏览器
     driver.quit()

@@ -444,6 +444,93 @@ def validate_whatsapp_in_field(
     return valid_phones, invalid_phones, results
 
 
+def clean_data_batch(
+    input_files: List[str],
+    output_dir: Optional[str] = None,
+    email_columns: Optional[List[str]] = None,
+    whatsapp_columns: Optional[List[str]] = None,
+    check_email_mx: bool = False,
+    check_email_smtp: bool = False,
+    check_whatsapp_online: bool = False,
+    progress_callback=None
+) -> Dict:
+    """
+    批量处理多个文件
+    
+    参数:
+    - input_files: 输入文件路径列表
+    - output_dir: 输出目录，如果为None则使用输入文件所在目录
+    - 其他参数同 clean_data
+    
+    返回: 统计信息字典
+    """
+    if not input_files:
+        raise ValueError("输入文件列表不能为空")
+    
+    if progress_callback:
+        progress_callback(f"开始批量处理 {len(input_files)} 个文件...")
+    
+    all_stats = {
+        'total_files': len(input_files),
+        'successful_files': 0,
+        'failed_files': 0,
+        'file_results': []
+    }
+    
+    for idx, input_file in enumerate(input_files, 1):
+        if progress_callback:
+            progress_callback(f"\n[{idx}/{len(input_files)}] 处理文件: {os.path.basename(input_file)}")
+        
+        try:
+            # 生成输出文件名
+            if output_dir:
+                base_name = os.path.splitext(os.path.basename(input_file))[0]
+                output_file = os.path.join(output_dir, f"{base_name}_已清洗.xlsx")
+            else:
+                input_dir = os.path.dirname(input_file) or "."
+                base_name = os.path.splitext(os.path.basename(input_file))[0]
+                output_file = os.path.join(input_dir, f"{base_name}_已清洗.xlsx")
+            
+            # 处理单个文件
+            stats = clean_data(
+                input_file=input_file,
+                output_file=output_file,
+                email_columns=email_columns,
+                whatsapp_columns=whatsapp_columns,
+                check_email_mx=check_email_mx,
+                check_email_smtp=check_email_smtp,
+                check_whatsapp_online=check_whatsapp_online,
+                progress_callback=lambda msg: progress_callback(f"  {msg}") if progress_callback else None
+            )
+            
+            all_stats['successful_files'] += 1
+            all_stats['file_results'].append({
+                'file': input_file,
+                'output': output_file,
+                'status': 'success',
+                'stats': stats
+            })
+            
+            if progress_callback:
+                progress_callback(f"  ✓ 完成: {os.path.basename(output_file)}")
+                
+        except Exception as e:
+            all_stats['failed_files'] += 1
+            all_stats['file_results'].append({
+                'file': input_file,
+                'output': None,
+                'status': 'failed',
+                'error': str(e)
+            })
+            if progress_callback:
+                progress_callback(f"  ✗ 失败: {e}")
+    
+    if progress_callback:
+        progress_callback(f"\n批量处理完成: 成功 {all_stats['successful_files']}/{all_stats['total_files']}, 失败 {all_stats['failed_files']}/{all_stats['total_files']}")
+    
+    return all_stats
+
+
 def clean_data(
     input_file: str,
     output_file: str,
